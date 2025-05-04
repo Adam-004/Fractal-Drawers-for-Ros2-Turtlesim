@@ -9,9 +9,13 @@ import colorsys
 import argparse
 import sys
 
-# ---- Koch Geometry Helpers ----
+# ---- Constants
+# Base triangle fits in 11x11 turtlesim window
+TRIANGLE = [(3.0, 3.0), (8.0, 3.0), (5.5, 8.0)] # warning do not change triangle points!
 
-# Generate 3 new points (a, c, b) that divide segment p1-p2 and create a triangle peak (c)
+
+# ---- Geometry Helpers
+# Generate 3 new points (a, b, c) that divide segment p1-p2 and create a triangle peak
 def generate_points(p1, p2):
     dx = (p2[0] - p1[0]) / 3.0
     dy = (p2[1] - p1[1]) / 3.0
@@ -29,7 +33,7 @@ def generate_points(p1, p2):
 # Recursively build the full Koch snowflake from an initial polygon
 def generate_snowflake(base_points, level):
     points = base_points[:]
-    points.append(points[0])  # Close the loop
+    points.append(points[0])
     while level > 0:
         i = 0
         new_points = []
@@ -44,22 +48,21 @@ def generate_snowflake(base_points, level):
         level -= 1
     return points
 
-# ---- Turtle Controller Node ----
-
+# ---- Turtle Controller Node
 class TurtleController(Node):
     def __init__(self, speed_scale=1.0):
         super().__init__('koch_turtle')
-        self.speed_scale = speed_scale  # Scale speed based on Koch level
+        self.speed_scale = speed_scale
         self.publisher = self.create_publisher(Twist, '/turtle1/cmd_vel', 10)
-        self.subscriber = self.create_subscription(Pose, '/turtle1/pose', self.pose_callback, 10)
+        self.subscriber = self.create_subscription(Pose, '/turtle1/pose', self.get_pose, 10)
         self.pose = None
         self.timer = self.create_timer(0.1, lambda: None)  # Required for spin to work
 
-    # Receive turtle's current pose
-    def pose_callback(self, msg):
+    # Get turtle's current pose
+    def get_pose(self, msg):
         self.pose = msg
 
-    # Move turtle to a point (x, y) using velocity commands
+    # Move turtle to a point (x, y)
     def go_to_point(self, x, y):
         while self.pose is None:
             rclpy.spin_once(self)
@@ -68,7 +71,9 @@ class TurtleController(Node):
         while rclpy.ok():
             dx = x - self.pose.x
             dy = y - self.pose.y
+
             distance = math.sqrt(dx ** 2 + dy ** 2)
+
             angle_to_target = math.atan2(dy, dx)
             angle_diff = angle_to_target - self.pose.theta
             angle_diff = math.atan2(math.sin(angle_diff), math.cos(angle_diff))  # Normalize
@@ -77,25 +82,27 @@ class TurtleController(Node):
             # Rotate toward target
             if abs(angle_diff) > 0.1:
                 twist.angular.z = 4.0 * angle_diff * self.speed_scale
-            # Move forward when facing the right direction
-            elif distance > tolerance:
+
+            elif distance > tolerance:  # Move forward when facing the right direction
                 twist.linear.x = 3.0 * distance * self.speed_scale
+
             else:
                 break  # Close enough
+
             self.publisher.publish(twist)
             rclpy.spin_once(self)
         self.stop()
 
-    # Publish zero velocity to stop turtle
     def stop(self):
         self.publisher.publish(Twist())
         time.sleep(0.02)
 
-    # Instantly teleport turtle to a position without drawing
+    # Teleport turtle to a position (for going to initial position)
     def teleport_to(self, x, y, theta=0.0):
         client = self.create_client(TeleportAbsolute, '/turtle1/teleport_absolute')
         while not client.wait_for_service(timeout_sec=1.0):
             self.get_logger().info('Waiting for teleport service...')
+
         request = TeleportAbsolute.Request()
         request.x = x
         request.y = y
@@ -108,6 +115,7 @@ class TurtleController(Node):
         client = self.create_client(SetPen, '/turtle1/set_pen')
         while not client.wait_for_service(timeout_sec=1.0):
             self.get_logger().info('Waiting for set_pen service...')
+
         request = SetPen.Request()
         request.r = r
         request.g = g
@@ -117,43 +125,40 @@ class TurtleController(Node):
         future = client.call_async(request)
         rclpy.spin_until_future_complete(self, future)
 
-# ---- Drawing Function ----
-
-# Iterate through snowflake points, draw segments with HSV rainbow color gradient
-def draw_snowflake(turtle_controller, points):
-    total = len(points)
-    for i, point in enumerate(points):
+# ---- Drawing Function
+# Iterate through given path points, draw segments with HSV rainbow color gradient
+def draw_and_go_through_path(turtle_controller : TurtleController, path):
+    total = len(path)
+    for i, point in enumerate(path):
         hue = i / total  # Progress-based hue
         r, g, b = [int(255 * c) for c in colorsys.hsv_to_rgb(hue, 0.6, 1.0)]
         turtle_controller.set_pen(r=r, g=g, b=b, width=2)
+
         turtle_controller.go_to_point(point[0], point[1])
 
-# ---- Main Entry Point ----
-
+# ---- Main Entry Point
 def main(args=None):
-    # Parse CLI argument for Koch recursion level
+    # Args handling (level of Koch snowflake)
     parser = argparse.ArgumentParser(description='Draw Koch snowflake with turtlesim.')
     parser.add_argument('--level', type=int, default=2, help='Recursion depth (e.g., 1–4)')
-    parsed_args = parser.parse_args(args)
+    level = parser.parse_args(args).level
 
-    # Speed increases with complexity
-    speed_scale = 1.0 + (parsed_args.level - 1) * 0.5
+    # Set speed based on level to compensate for complexity
+    speed_scale = 1.0 + (level - 1) * 0.5
 
     rclpy.init()
     turtle = TurtleController(speed_scale=speed_scale)
 
-    # Base triangle fits in 11x11 turtlesim window
-    triangle = [(3.0, 3.0), (8.0, 3.0), (5.5, 8.0)]
-    snowflake = generate_snowflake(triangle, parsed_args.level)
+    snowflake = generate_snowflake(TRIANGLE, level)
 
     # Teleport to first point with pen off (no drawing)
-    start_x, start_y = triangle[0]
+    start_x, start_y = TRIANGLE[0]
     turtle.set_pen(off=True)
     turtle.teleport_to(start_x, start_y, 0.0)
     turtle.set_pen(r=0, g=0, b=255, width=2, off=False)
 
     # Draw the full snowflake
-    draw_snowflake(turtle, snowflake)
+    draw_and_go_through_path(turtle, snowflake)
 
     rclpy.shutdown()
 
