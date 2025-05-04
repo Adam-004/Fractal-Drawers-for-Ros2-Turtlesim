@@ -67,7 +67,7 @@ class TurtleController(Node):
         while self.pose is None:
             rclpy.spin_once(self)
 
-        tolerance = 0.1  # Distance threshold to stop
+        tolerance = 0.01  # Distance threshold to stop
         while rclpy.ok():
             dx = x - self.pose.x
             dy = y - self.pose.y
@@ -80,7 +80,7 @@ class TurtleController(Node):
 
             twist = Twist()
             # Rotate toward target
-            if abs(angle_diff) > 0.1:
+            if abs(angle_diff) > tolerance:
                 twist.angular.z = 4.0 * angle_diff * self.speed_scale
 
             elif distance > tolerance:  # Move forward when facing the right direction
